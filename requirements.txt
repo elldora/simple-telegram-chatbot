@@ -3,3 +3,4 @@ pyTelegramBotAPI
 llama-cpp-python
 ctransformers
 ipywidgets
+seaborn
