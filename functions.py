@@ -9,13 +9,14 @@ import json
 import re
 import time
 
-def read_model(model_path = ''):
+bot_name = "ElldoraBot"
+
+def read_model(model_path_or_repo_id = None):
     llm = AutoModelForCausalLM.from_pretrained(
-        "./model/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        model_path_or_repo_id='./model/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf',
         model_type="llama" 
     )
     return llm
-
 
 def simple_qa(model, question = "Explain GGUF files"):
     answer = model(f"Q: {question}. A:")
@@ -28,28 +29,68 @@ def read_dataset(df_path = './data/df_final.csv'):
 def create_prompt(instruction, context=None):
     if context:
         return f"""<|system|>
-                    You are a helpful AI assistant that analyzes data. Use the provided context to answer questions.</s>
-                    <|user|>
-                    Context: {context}
-                    Question: {instruction}</s>
-                    <|assistant|>
-                """
+You are a helpful AI assistant named {bot_name} that analyzes data. Use the provided context to answer questions.</s>
+<|user|>
+Context: {context}
+Request: {instruction}</s>
+<|assistant|>"""
     else:
         return f"""<|system|>
-                    You are a helpful AI assistant that analyzes data.</s>
-                    <|user|>
-                    {instruction}</s>
-                    <|assistant|>
-                """
+You are a helpful AI assistant named {bot_name} that analyzes data. Provide clear and direct responses.</s>
+<|user|>
+{instruction}</s>
+<|assistant|>"""
     
 def ask_llm(model, prompt, max_tokens=400):
     response = model(
         prompt,
         max_new_tokens=max_tokens,
-        temperature=0.2,
+        temperature=0.7,
         repetition_penalty=1.1
     )
     return response
+
+def get_dataframe_column_name(model, df, question):
+    column_name = ""
+    
+    while column_name not in df.columns:
+        
+        context = f"""
+        Available columns names in the dataset:
+        {', '.join(df.columns)}
+        
+        Question to analyze: {question}
+        """
+        
+        prompt = create_prompt(
+            instruction="""Based on the question and the available columns, identify the most relevant column name.
+            Rules:
+            1. Return ONLY the exact column name from the provided list
+            2. If the question mentions multiple columns, return the main column being analyzed
+            3. If you're unsure, return the column that best matches the question's intent
+            4. Do not add any explanations or additional text
+            5. The response should be a single column name exactly as it appears in the list
+            6. The response must be one word 
+            """,
+            context=context
+        )
+        
+        column_name = ask_llm(model, prompt).strip()
+        
+        column_name = column_name.strip('"\'')
+        column_name = column_name.strip()
+        
+        if ' ' in column_name:
+            for col in df.columns:
+                
+                if col.lower() == column_name.lower():
+                    column_name = col
+                    break
+    
+    if column_name not in df.columns:
+        column_name = df.columns[0]
+    
+    return column_name
 
 def get_dataframe_summary(df):
     summary = f"""
@@ -66,7 +107,7 @@ def get_dataframe_summary(df):
     if len(prompt.split()) > 400: 
         return "Data too large to process. Please try with a smaller subset."
     
-    return ask_llm(prompt)
+    return prompt
 
 def get_efficient_dataframe_summary(df):
     stats = {
@@ -90,7 +131,7 @@ def get_efficient_dataframe_summary(df):
     
     return ask_llm(prompt)
 
-def analyze_column(df, column_name):
+def analyze_numeric_column(df, column_name):
     if column_name not in df.columns:
         return f"Column {column_name} not found in DataFrame."
     
@@ -108,7 +149,26 @@ def analyze_column(df, column_name):
         context=col_summary
     )
     
-    return ask_llm(prompt)
+    return prompt
+
+def analyze_categorical_column(df, column_name):
+    if column_name not in df.columns:
+        return f"Column {column_name} not found in DataFrame."
+    
+    col_summary = f"""
+    Column '{column_name}' statistics:
+    - Data type: {df[column_name].dtype}
+    - Unique values: {df[column_name].unique()}
+    - Missing values: {df[column_name].isna().sum()}
+    
+    """
+    
+    prompt = create_prompt(
+        f"Analyze the '{column_name}' column and provide insights about its distribution.",
+        context=col_summary
+    )
+    
+    return prompt
 
 
 def draw_piechart(df, feature_name):
@@ -132,3 +192,14 @@ def draw_piechart(df, feature_name):
 def load_pie_chart(image_path):
     image = Image.open(image_path)
     return image
+
+def get_question_keyword(question):
+
+    qa_keyword_dict = {
+        "What is the distribution of education levels among individuals?": "Educations",
+        "What are the age ranges in the dataset?": "Age",
+        "What percentage of people are single vs. married?": "Marriage",
+        "How many are currently employed vs. have left the organization?": "isactive",
+        "What is the gender distribution?": "Sex",
+    }
+    return qa_keyword_dict.get(question, "UNDEFINED")
