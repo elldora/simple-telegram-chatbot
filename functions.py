@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import yaml
 import os
 import json
 import re
@@ -203,3 +204,8 @@ def get_question_keyword(question):
         "What is the gender distribution?": "Sex",
     }
     return qa_keyword_dict.get(question, "UNDEFINED")
+
+def load_config(file_path, source):
+    with open(file_path, 'r') as file:
+        config = yaml.safe_load(file)
+    return config[source]
